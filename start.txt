@@ -1,0 +1,112 @@
+COOKIE LAB: ОПИСАНИЕ И ЗАПУСК
+=============================
+
+Проект
+------
+
+Это Java-версия проекта cookie_example_react_springboot. Сохранены его исходная структура каталогов (backend/ и frontend/), идея демонстрации, React UI, endpoints, конфигурация, .env.example и данная инструкция. Изменён язык backend: Kotlin заменён на Java, а Gradle Kotlin DSL в build.gradle.kts оставлен.
+
+Демо состоит из двух частей:
+- frontend/ — React, TypeScript, Vite 7. Страница показывает доступные JavaScript cookies, позволяет запросить cookies у backend, проверить их на сервере и удалить их.
+- backend/ — Java + Spring Boot REST API. Сборка Gradle Kotlin DSL в build.gradle.kts. API устанавливает cookies и читает входящий заголовок Cookie.
+
+Базы данных и настоящей авторизации нет.
+
+Ключевые компоненты backend
+---------------------------
+
+1. CookieLabApplication.java — точка запуска Spring Boot.
+2. CookieController.java — endpoints:
+   POST /api/cookies/set устанавливает две cookies в заголовках Set-Cookie:
+     demoVisible — HttpOnly=false, пример: доступна JavaScript при совпадении cookie host с сайтом.
+     demoHttpOnly — HttpOnly=true, JavaScript не может прочитать её через document.cookie.
+   GET /api/cookies/inspect читает cookies, присланные браузером, и возвращает их в учебн��х целях. В production не возвращайте значения секретных cookies из API.
+   POST /api/cookies/clear удаляет обе cookies через Max-Age=0.
+3. CorsConfig.java — разрешает credentialed CORS только для origins из CORS_ALLOWED_ORIGINS. Укажите точный origin, не '*'.
+4. application.yml — порт, CORS origin, атрибуты Secure и SameSite настраиваются переменными окружения.
+5. build.gradle.kts — применяет Java plugin и Gradle Kotlin DSL; Kotlin plugin/dependencies отсутствуют.
+
+Ключевые компоненты frontend
+----------------------------
+
+1. src/App.tsx — форма и отображение результата. fetch использует credentials: 'include', чтобы браузер мог включить cookies в cross-origin запросы.
+2. document.cookie — показывает только cookies, доступные JavaScript на host/path текущей страницы; HttpOnly-cookie скрыта.
+3. vite.config.ts — локально проксирует /api на Spring Boot. В production VITE_API_URL указывает на backend URL.
+4. frontend/.env.example и backend/.env.example — шаблоны, а не автоматически загружаемые настройки платформы. Скопируйте/введите пары KEY=VALUE в нужном окружении.
+
+Как cookies живут и передаются
+------------------------------
+
+Сервер отправляет Set-Cookie, браузер самостоятельно решает, сохранить ли cookie. JavaScript не может читать заголовок Set-Cookie: браузер обрабатывает его сам. При последующих запросах браузер отправляет подходящие cookies по правилам host/domain, path, Secure, SameSite и срока действия.
+
+HttpOnly запрещает JavaScript доступ к cookie, но не мешает браузеру отправить её серверу. Проверьте DevTools → Application → Cookies (Chrome/Edge) или Storage → Cookies (Firefox): HttpOnly-cookie там видна с атрибутом HttpOnly.
+
+Cookie не привязана к порту, но привязана к host/domain. В локальной схеме frontend и backend оба доступны через localhost, поэтому Vite proxy делает запрос для браузера same-origin, а обычную cookie можно увидеть в document.cookie.
+
+В production Cloudflare Pages (*.pages.dev) и Render (*.onrender.com) — разные сайты/домены. Cookie backend относится к домену Render и не появится в document.cookie на странице Cloudflare, даже без HttpOnly. Браузер может отправлять её backend-запросу с credentials include, если разрешают CORS, SameSite/Secure и политика third-party cookies.
+
+CORS, credentials, SameSite и Secure
+------------------------------------
+
+CORS позволяет JavaScript сайта читать ответ другого origin. Он не включает cookies сам по себе и не отменяет правила cookie. Для credentialed cross-origin fetch нужны:
+- frontend: fetch(..., { credentials: 'include' });
+- Spring: конкретный Access-Control-Allow-Origin и Access-Control-Allow-Credentials: true;
+- подходящие cookie attributes: для cross-site обычно SameSite=None; Secure, а запрос должен идти по HTTPS.
+
+Браузеры и расширения могут блокировать third-party cookies даже при правильном CORS. Для надёжного production сценария предпочитайте собственные поддомены одного сайта, например app.example.com и api.example.com, или reverse proxy с одним origin. Не пытайтесь задать общий Domain для pages.dev и onrender.com.
+
+Локальный запуск
+----------------
+
+Нужны JDK 17+, Gradle 8.10+ и Node.js 20.19+ либо 22.12+.
+
+Терминал 1 — backend:
+  cd backend
+  gradle bootRun
+
+Терминал 2 — frontend:
+  cd frontend
+  npm install
+  npm run dev
+
+Откройте http://localhost:5173. Нажмите «Установить cookies», затем «Обновить document.cookie», «Спросить backend». Откройте DevTools → Application/Storage → Cookies и сравните атрибут HttpOnly. Нажмите «Удалить обе cookies» для очистки.
+
+Локальные defaults backend: SERVER_PORT=8080, CORS_ALLOWED_ORIGINS=http://localhost:5173, COOKIE_SECURE=false, COOKIE_SAME_SITE=Lax. frontend/.env.example можно скопировать в frontend/.env.local; оставьте VITE_API_URL пустым, чтобы использовать локальный Vite proxy. Spring Boot читает backend env из shell/окружения процесса.
+
+Проверка API напрямую (curl не применяет браузерную CORS policy):
+  curl -i -X POST http://localhost:8080/api/cookies/set
+  curl -i http://localhost:8080/api/cookies/inspect
+  curl -i -X POST http://localhost:8080/api/cookies/clear
+
+Для cookie jar в curl используйте -c cookies.txt -b cookies.txt.
+
+Деплой React на Cloudflare Pages
+--------------------------------
+
+1. Подключите репозиторий; Root directory: frontend.
+2. Build command: npm run build; output directory: dist.
+3. В Settings → Environment variables задайте VITE_API_URL=https://<your-backend>.onrender.com (без завершающего слеша).
+4. Пересоберите/разверните сайт после изменения переменной. VITE_API_URL встраивается в JavaScript bundle и публична; не помещайте туда секреты.
+
+Деплой Spring Boot на Render
+----------------------------
+
+1. Создайте Web Service из этого репозитория, выберите Docker; Root Directory: backend, чтобы использовался backend/Dockerfile.
+2. В Render Environment задайте CORS_ALLOWED_ORIGINS=https://<your-project>.pages.dev — точный origin, без пути и завершающего slash. Для custom domain укажите фактический origin.
+3. Задайте COOKIE_SECURE=true и COOKIE_SAME_SITE=None для Cloudflare Pages → onrender.com cross-site cookies. SameSite=None требует Secure; Render предоставляет внешний HTTPS.
+4. SERVER_PORT можно оставить unset (default 8080). Render может передать собственный PORT: при необходимости настройте SERVER_PORT в соответствии с портом web service.
+5. Не задавайте production secrets в коде или репозитории; настройте переменные в Environment на Render.
+
+Файлы .env.example — только документация-шаблоны, Cloudflare/Render их не импортируют. Введите пары KEY=VALUE в Environment Variables соответствующего провайдера. VITE_API_URL становится частью публичного frontend bundle.
+
+Если браузер не отправляет cookies в production
+------------------------------------------------
+
+Проверьте DevTools → Network: preflight OPTIONS и API-ответ должны содержать подходящий Access-Control-Allow-Origin (��очный frontend origin) и Access-Control-Allow-Credentials: true. Убедитесь, что fetch использует credentials: include, cookie имеет Secure=true и SameSite=None при cross-site, а браузер не блокирует third-party cookies. Посмотрите Cookies в Application/Storage и сообщения о blocked cookies.
+
+Ограничения и безопасность
+--------------------------
+
+Демо-значения не секреты. Endpoint inspect специально возвращает cookie values только для обучения — удалите его или не возвращайте значения в реальном приложении. HttpOnly снижает риск чтения cookie через JavaScript при XSS, но не устраняет XSS и не заменяет CSRF-защиту. Для state-changing запросов в настоящем приложении отдельно проектируйте CSRF defense и авторизацию. Secure, SameSite, HttpOnly и CORS решают разные задачи.
+
+В этом демо нет аутентификации, базы данных и настоящих секретов. Не используйте demoVisible/demoHttpOnly как токены. Не храните реальные секреты в VITE_*: Vite публикует их в браузерном bundle.
